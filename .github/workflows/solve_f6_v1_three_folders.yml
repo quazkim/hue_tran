@@ -1,4 +1,4 @@
-name: Solve F6 Demand Random (30-50-100, A8-L120, x3)
+name: Solve F6 Demand Random (30-50-100, A4-L120, x3)
 on:
   push:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
       a_values:
         description: "Comma-separated A (M_d) values, e.g. 4,8"
         required: false
-        default: "8"
+        default: "4"
       l_values:
         description: "Comma-separated L (L_d) values, e.g. 60,90,120"
         required: false
@@ -64,7 +64,7 @@ jobs:
       - name: Build instance matrix for demand random folders (30, 50, 100)
         id: mk
         env:
-          A_VALUES: ${{ github.event.inputs.a_values || '8' }}
+          A_VALUES: ${{ github.event.inputs.a_values || '4' }}
           L_VALUES: ${{ github.event.inputs.l_values || '120' }}
           RUNS_PER_INSTANCE: ${{ github.event.inputs.runs_per_instance || '3' }}
           TARGET_JOBS: ${{ github.event.inputs.target_jobs || '216' }}
@@ -750,7 +750,7 @@ jobs:
       - name: Upload summary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: solve-f6-demand-random-30-50-100-a8-l120-x3-summary
+          name: solve-f6-demand-random-30-50-100-a4-l120-x3-summary
           path: |
             summary/solve_f6_from_augmented_inits_summary.csv
             batch_init_ats_improved_with_multivisit_recompute_failures.csv
