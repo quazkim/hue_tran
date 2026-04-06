@@ -98,13 +98,13 @@ jobs:
               raise SystemExit("No L values provided (L_VALUES is empty)")
 
           roots = [
-              ("demand_random_30", pathlib.Path("test_data/data_demand_random/30")),
-              ("demand_random_50", pathlib.Path("test_data/data_demand_random/50")),
-              ("demand_random_100", pathlib.Path("test_data/data_demand_random/100")),
+              ("demand_random_30", pathlib.Path("test_data/data_demand_random/30"), 2, 2),
+              ("demand_random_50", pathlib.Path("test_data/data_demand_random/50"), 2, 2),
+              ("demand_random_100", pathlib.Path("test_data/data_demand_random/100"), 3, 3),
           ]
 
           base_tasks = []
-          for group, root in roots:
+          for group, root, n_truck, n_drone in roots:
               if not root.is_dir():
                   raise SystemExit(f"Missing folder: {root}")
               for dat in sorted(root.glob("*.dat")):
@@ -114,6 +114,8 @@ jobs:
                           "instance_name": dat.stem,
                           "dat": str(dat),
                           "seed": "",
+                          "n_truck": n_truck,
+                          "n_drone": n_drone,
                       }
                   )
 
@@ -187,8 +189,6 @@ jobs:
           LS_SHAKE_ON_STAGNATION: ${{ github.event.inputs.ls_shake_on_stagnation || '1' }}
           LS_MAX_SHAKES: ${{ github.event.inputs.ls_max_shakes || '500' }}
           LS_MAX_APPLIED: ${{ github.event.inputs.ls_max_applied || '-1' }}
-          N_TRUCK: "2"
-          N_DRONE: "2"
           SKIP_ATS: "0"
           SOL_OUT_DIR: run_outputs
         run: |
@@ -338,6 +338,8 @@ jobs:
               run_id = int(t["run_id"])
               m_d = str(t["A"])
               l_d = str(t["L"])
+              n_truck = int(t.get("n_truck", 2))
+              n_drone = int(t.get("n_drone", 2))
               group_name = str(t.get("group") or "")
 
               print(f"[RUN] {run_name}")
@@ -348,7 +350,7 @@ jobs:
               print(f"SOLVER_TIME_LIMIT_SEC={solver_limit_str}")
               print(f"ATS_SEG={os.environ['ATS_SEG']} ATS_DIV={os.environ['ATS_DIV']} ATS_MAX_ITERS={os.environ['ATS_MAX_ITERS']}")
               print(f"LS_SHAKE_ON_STAGNATION={os.environ['LS_SHAKE_ON_STAGNATION']} LS_MAX_SHAKES={os.environ['LS_MAX_SHAKES']} LS_MAX_APPLIED={os.environ['LS_MAX_APPLIED']}")
-              print(f"N_TRUCK={os.environ['N_TRUCK']} N_DRONE={os.environ['N_DRONE']}")
+              print(f"N_TRUCK={n_truck} N_DRONE={n_drone}")
               print(f"SKIP_ATS={os.environ['SKIP_ATS']}")
 
               log_path = pathlib.Path(f"run_logs/{run_name}.log")
@@ -357,6 +359,8 @@ jobs:
               env = os.environ.copy()
               env["SOLVER_TIME_LIMIT_SEC"] = solver_limit_str
               env["SOL_OUT_DIR"] = str(run_out_dir)
+              env["N_TRUCK"] = str(n_truck)
+              env["N_DRONE"] = str(n_drone)
               cmd = ["C_Version/read_data_f6", dat_path, m_d, l_d]
               if seed_path:
                   cmd.append(seed_path)
@@ -415,6 +419,8 @@ jobs:
                   "instance_run_name": run_name,
                   "dat_path": dat_path,
                   "seed_path": seed_path,
+                  "n_truck": n_truck,
+                  "n_drone": n_drone,
               }
               out = pathlib.Path(f"run_logs/{run_name}.summary.json")
               out.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
@@ -507,6 +513,8 @@ jobs:
               "log",
               "dat_path",
               "seed_path",
+              "n_truck",
+              "n_drone",
               "Group",
               "beta",
           ]
@@ -534,9 +542,156 @@ jobs:
         id: recompute
         run: |
           set +e
-          N_TRUCK=2 N_DRONE=2 SOLVER_BIN=C_Version/read_data_f6 PARALLEL_JOBS=1 \
-            python recompute_metrics_from_solutions_csv.py summary/solve_f6_from_augmented_inits_summary.csv
-          rc=$?
+          rm -f batch_init_ats_improved_with_multivisit_recompute_failures.csv
+          rm -f summary/recompute_failures_2x2.csv summary/recompute_failures_3x3.csv
+
+          python - << 'PY'
+          import csv
+          import pathlib
+
+          src = pathlib.Path("summary/solve_f6_from_augmented_inits_summary.csv")
+          out_2x2 = pathlib.Path("summary/_recompute_2x2.csv")
+          out_3x3 = pathlib.Path("summary/_recompute_3x3.csv")
+
+          with src.open("r", newline="", encoding="utf-8") as f:
+              r = csv.DictReader(f)
+              rows = list(r)
+              fields = r.fieldnames or []
+
+          def is_3x3(row):
+              n_truck = (row.get("n_truck") or "").strip()
+              n_drone = (row.get("n_drone") or "").strip()
+              if n_truck == "3" and n_drone == "3":
+                  return True
+              dat = (row.get("dat_path") or row.get("instance") or "").replace("\\", "/").lower()
+              return "/100/" in dat
+
+          rows_2x2 = []
+          rows_3x3 = []
+          for row in rows:
+              if is_3x3(row):
+                  rows_3x3.append(row)
+              else:
+                  rows_2x2.append(row)
+
+          for path, data in ((out_2x2, rows_2x2), (out_3x3, rows_3x3)):
+              with path.open("w", newline="", encoding="utf-8") as f:
+                  w = csv.DictWriter(f, fieldnames=fields)
+                  w.writeheader()
+                  w.writerows(data)
+
+          print(f"rows_total={len(rows)}")
+          print(f"rows_2x2={len(rows_2x2)}")
+          print(f"rows_3x3={len(rows_3x3)}")
+          print(out_2x2)
+          print(out_3x3)
+          PY
+
+          rc22=0
+          rc33=0
+
+          if [ "$(wc -l < summary/_recompute_2x2.csv)" -gt 1 ]; then
+            rm -f batch_init_ats_improved_with_multivisit_recompute_failures.csv
+            N_TRUCK=2 N_DRONE=2 SOLVER_BIN=C_Version/read_data_f6 PARALLEL_JOBS=1 \
+              python recompute_metrics_from_solutions_csv.py summary/_recompute_2x2.csv
+            rc22=$?
+            if [ -f batch_init_ats_improved_with_multivisit_recompute_failures.csv ]; then
+              mv batch_init_ats_improved_with_multivisit_recompute_failures.csv summary/recompute_failures_2x2.csv
+            fi
+          fi
+
+          if [ "$(wc -l < summary/_recompute_3x3.csv)" -gt 1 ]; then
+            rm -f batch_init_ats_improved_with_multivisit_recompute_failures.csv
+            N_TRUCK=3 N_DRONE=3 SOLVER_BIN=C_Version/read_data_f6 PARALLEL_JOBS=1 \
+              python recompute_metrics_from_solutions_csv.py summary/_recompute_3x3.csv
+            rc33=$?
+            if [ -f batch_init_ats_improved_with_multivisit_recompute_failures.csv ]; then
+              mv batch_init_ats_improved_with_multivisit_recompute_failures.csv summary/recompute_failures_3x3.csv
+            fi
+          fi
+
+          python - << 'PY'
+          import csv
+          import pathlib
+
+          main_csv = pathlib.Path("summary/solve_f6_from_augmented_inits_summary.csv")
+          part_csvs = [
+              pathlib.Path("summary/_recompute_2x2.csv"),
+              pathlib.Path("summary/_recompute_3x3.csv"),
+          ]
+
+          with main_csv.open("r", newline="", encoding="utf-8") as f:
+              r = csv.DictReader(f)
+              rows = list(r)
+              fields = r.fieldnames or []
+
+          by_job = {}
+          for p in part_csvs:
+              if not p.exists():
+                  continue
+              with p.open("r", newline="", encoding="utf-8") as f:
+                  rr = csv.DictReader(f)
+                  for row in rr:
+                      key = (row.get("job_id") or "").strip()
+                      if key:
+                          by_job[key] = row
+
+          replaced = 0
+          for row in rows:
+              key = (row.get("job_id") or "").strip()
+              if key and key in by_job:
+                  src = by_job[key]
+                  for col in fields:
+                      row[col] = src.get(col, row.get(col, ""))
+                  replaced += 1
+
+          with main_csv.open("w", newline="", encoding="utf-8") as f:
+              w = csv.DictWriter(f, fieldnames=fields)
+              w.writeheader()
+              w.writerows(rows)
+
+          print(f"merged_rows={len(rows)}")
+          print(f"replaced_rows={replaced}")
+          print(main_csv)
+          PY
+
+          python - << 'PY'
+          import csv
+          import pathlib
+
+          rep = pathlib.Path("batch_init_ats_improved_with_multivisit_recompute_failures.csv")
+          sources = [
+              pathlib.Path("summary/recompute_failures_2x2.csv"),
+              pathlib.Path("summary/recompute_failures_3x3.csv"),
+          ]
+          fields = ["row_index", "job_id", "instance", "A", "L", "reason"]
+          rows = []
+          for p in sources:
+              if not p.exists():
+                  continue
+              with p.open("r", newline="", encoding="utf-8") as f:
+                  r = csv.DictReader(f)
+                  for row in r:
+                      rows.append({k: row.get(k, "") for k in fields})
+
+          if rows:
+              with rep.open("w", newline="", encoding="utf-8") as f:
+                  w = csv.DictWriter(f, fieldnames=fields)
+                  w.writeheader()
+                  w.writerows(rows)
+              print(f"failure_rows={len(rows)}")
+              print(rep)
+          else:
+              if rep.exists():
+                  rep.unlink()
+              print("failure_rows=0")
+          PY
+
+          if [ $rc22 -ne 0 ] || [ $rc33 -ne 0 ]; then
+            rc=1
+          else
+            rc=0
+          fi
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
           if [ -f batch_init_ats_improved_with_multivisit_recompute_failures.csv ]; then
             echo "recompute_failures_lines=$(wc -l < batch_init_ats_improved_with_multivisit_recompute_failures.csv)" >> "$GITHUB_OUTPUT"
